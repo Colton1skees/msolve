@@ -14,7 +14,22 @@
 #include <string.h>
 #include <errno.h>
 
-/* ---- posix_memalign ---- */
+/* ---- posix_memalign and memory overrides ---- */
+/* MinGW/MSVC uses _aligned_malloc which is NOT compatible with free().
+   To support posix_memalign() alongside free() calls in the codebase,
+   we must override malloc/free to use the aligned versions consistently.
+*/
+
+static inline void *msolve_aligned_calloc(size_t nmemb, size_t size)
+{
+    size_t total_size = nmemb * size;
+    void *ptr = _aligned_malloc(total_size, 16);
+    if (ptr) {
+        memset(ptr, 0, total_size);
+    }
+    return ptr;
+}
+
 static inline int msolve_posix_memalign(void **memptr, size_t alignment, size_t size)
 {
     void *p = _aligned_malloc(size, alignment);
@@ -25,7 +40,30 @@ static inline int msolve_posix_memalign(void **memptr, size_t alignment, size_t 
     *memptr = p;
     return 0;
 }
+
 #define posix_memalign msolve_posix_memalign
+
+/* Override standard allocators to use aligned versions, ensuring compatibility
+   with posix_memalign's behavior on Windows */
+#ifdef free
+#undef free
+#endif
+#define free(p) _aligned_free((p))
+
+#ifdef malloc
+#undef malloc
+#endif
+#define malloc(s) _aligned_malloc((s), 16)
+
+#ifdef calloc
+#undef calloc
+#endif
+#define calloc(n, s) msolve_aligned_calloc((n), (s))
+
+#ifdef realloc
+#undef realloc
+#endif
+#define realloc(p, s) _aligned_realloc((p), (s), 16)
 
 /* ---- getline / getdelim ---- */
 #ifndef MSOLVE_HAVE_GETLINE
@@ -42,7 +80,7 @@ static inline ssize_t msolve_getdelim(char **lineptr, size_t *n, int delim, FILE
 
     if (*lineptr == NULL || *n == 0) {
         *n = 128;
-        *lineptr = (char *)malloc(*n);
+        *lineptr = (char *)calloc(*n, 1);
         if (*lineptr == NULL) {
             return -1;
         }
@@ -55,6 +93,9 @@ static inline ssize_t msolve_getdelim(char **lineptr, size_t *n, int delim, FILE
             if (new_ptr == NULL) {
                 return -1;
             }
+            /* zero the newly allocated region so callers that
+               scan from *n-1 backwards never hit uninitialised bytes */
+            memset(new_ptr + *n, 0, new_size - *n);
             *lineptr = new_ptr;
             *n = new_size;
         }
@@ -69,6 +110,12 @@ static inline ssize_t msolve_getdelim(char **lineptr, size_t *n, int delim, FILE
     }
 
     (*lineptr)[pos] = '\0';
+    /* msolve's iofiles.c passes &len (the buffer capacity *n) to helper
+       functions like remove_newlines() and remove_trailing_delim(), which
+       treat it as the string length and index from *n-1 backwards.
+       glibc's getdelim typically returns a tight buffer so *n ≈ pos+1,
+       making that usage safe.  Replicate that here so the same code works. */
+    *n = pos;
     return (ssize_t)pos;
 }
 
