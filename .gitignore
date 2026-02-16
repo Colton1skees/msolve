@@ -35,3 +35,6 @@ missing
 stamp-h1
 msolve.pc
 /msolve
+/bin
+/lib
+/win64-build

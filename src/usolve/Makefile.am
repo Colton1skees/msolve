@@ -2,6 +2,8 @@ noinst_LTLIBRARIES 		= libusolve.la
 libusolve_la_SOURCES 	= usolve.c
 libusolve_ladir				=	$(includedir)/msolve/usolve
 libusolve_la_HEADERS	= libusolve.h
+libusolve_la_LDFLAGS	= -no-undefined
+libusolve_la_LIBADD	= -lflint -lmpfr -lgmp -lm
 libusolve_la_CFLAGS		= $(SIMD_FLAGS) $(CPUEXT_FLAGS) $(OPENMP_CFLAGS)
 
 EXTRA_DIST = 		libusolve.h \
